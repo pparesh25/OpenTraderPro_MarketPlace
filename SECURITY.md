@@ -121,11 +121,29 @@ These are tracked in the main app repository. Versions are not yet released.
 - A separate "Allow custom plugins / strategies / indicators" toggle (off by default) gates the existing `~/.opentrader-pro/{plugins,strategies,indicators}/` paths for users who want to author or sideload files.
 - Result: a user who never flips the dev-mode toggle can never accidentally execute a file from outside the verified marketplace.
 
-### Phase M3 — In-app marketplace fetcher
+### Phase M3 — In-app marketplace fetcher ✅ DONE 2026-04-28
 
-- The Accounts panel "Get example plugins" button will fetch this repository's contents directly via the GitHub API, verify each file's signature, and install into `~/.opentrader-pro/marketplace_cache/...`.
-- Files are written read-only (`chmod 0444`) as a defence-in-depth signal.
-- Auto-update opt-in: the app can periodically check for new marketplace versions and prompt before installing.
+- The Accounts panel **"Install marketplace files"** button (renamed
+  from "Get example plugins") fetches this repository's main-branch
+  zip via `https://github.com/{owner}/{repo}/archive/refs/heads/main.zip`,
+  extracts in a tmp dir, verifies every `.txt` against its sibling
+  `.sig` using the embedded `MARKETPLACE_PUBLIC_KEY`, and copies
+  verified files into `~/.opentrader-pro/marketplace_cache/`.
+  - Tampered or unsigned files are REJECTED — never installed.
+  - Files outside the canonical subdir prefixes
+    (`plugins/data/`, `plugins/exec/`, `strategies/`,
+    `indicators/{averages,bands,oscillators,custom}/`) are ignored —
+    defends against malicious zips dropping files at unexpected paths.
+  - Zip-slip pre-flight rejects entries that escape the temp extract dir.
+- Files are written read-only (`chmod 0o444` on POSIX) as a
+  defence-in-depth signal that users shouldn't edit them; the
+  signature would break on edit anyway.
+- A "Browse on GitHub →" companion button opens the marketplace URL
+  in the user's browser for inspection before installing.
+- CLI: `python -m opentrader.connectors_v2.marketplace_install
+  [--source URL|PATH]` — works headless / scripted / CI.
+- **Auto-update**: deferred to a future v1.1; M3 v1 ships manual
+  install only.
 
 ### Phase S3 — Consent gate for strategies + indicators
 
