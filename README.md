@@ -15,7 +15,7 @@ Every file in this repository is **executable Python code** that the OpenTrader-
 ## What's in this repository
 
 ```
-OpenTraderPro_MarketPlace/
+OpenTraderPro-MarketPlace/
 ├── LICENSE                   GNU General Public License v3.0
 ├── README.md                 (this file)
 ├── SECURITY.md               Threat model + integrity roadmap
