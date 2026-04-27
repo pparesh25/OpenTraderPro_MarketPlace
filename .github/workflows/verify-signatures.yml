@@ -1,0 +1,45 @@
+name: verify-signatures
+
+# Verifies every .txt file in the marketplace has a valid Ed25519
+# signature against the embedded marketplace public key. Fails CI if
+# any signature is missing, malformed, or signed with the wrong key.
+#
+# Runs on every push + PR to main so a malicious PR (e.g. tampering
+# with a .txt without re-signing) cannot land silently.
+#
+# The verification logic is in `.github/scripts/verify_signatures.py`
+# — a standalone script that duplicates the algorithm from the
+# OpenTrader Pro app's signature_verifier module so the marketplace
+# CI doesn't depend on the main app being available.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify .txt signatures
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install cryptography
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install 'cryptography>=42.0'
+
+      - name: Verify all .txt signatures
+        run: python .github/scripts/verify_signatures.py
