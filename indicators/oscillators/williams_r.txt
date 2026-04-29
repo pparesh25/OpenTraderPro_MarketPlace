@@ -1,3 +1,4 @@
+# plugin-type: indicator
 """Williams %R indicator."""
 
 import numpy as np

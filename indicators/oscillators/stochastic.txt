@@ -1,3 +1,4 @@
+# plugin-type: indicator
 """Stochastic Oscillator indicator."""
 
 import numpy as np

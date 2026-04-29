@@ -1,3 +1,4 @@
+# plugin-type: indicator
 """Money Flow Index indicator."""
 
 import numpy as np

@@ -1,3 +1,4 @@
+# plugin-type: indicator
 """Triple Exponential Moving Average indicator."""
 
 import pandas as pd

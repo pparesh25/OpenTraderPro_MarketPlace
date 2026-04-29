@@ -1,3 +1,4 @@
+# plugin-type: indicator
 """On-Balance Volume indicator."""
 
 import numpy as np

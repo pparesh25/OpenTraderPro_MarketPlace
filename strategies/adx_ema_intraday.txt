@@ -1,3 +1,4 @@
+# plugin-type: strategy
 # adx_ema_intraday.txt — ADX + EMA Intraday BUY Strategy
 # Buys when ADX > threshold AND EMA20 > EMA50 AND price > EMA20
 #

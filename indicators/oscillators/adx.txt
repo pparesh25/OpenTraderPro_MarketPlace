@@ -1,3 +1,4 @@
+# plugin-type: indicator
 """Average Directional Index indicator."""
 
 import numpy as np
