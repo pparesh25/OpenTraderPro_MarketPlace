@@ -1,3 +1,4 @@
+# plugin-type: strategy
 # delivery_exit.txt — EOD Delivery Position Exit Strategy
 # Exits positions where EMA alignment breaks (close > prev_close > EMA50 > EMA150 > EMA200)
 #

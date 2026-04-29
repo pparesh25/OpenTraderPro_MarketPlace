@@ -1,3 +1,4 @@
+# plugin-type: indicator
 """Simple Moving Average indicator."""
 
 import pandas as pd

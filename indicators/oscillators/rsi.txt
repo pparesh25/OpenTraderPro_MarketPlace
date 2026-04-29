@@ -1,3 +1,4 @@
+# plugin-type: indicator
 """Relative Strength Index indicator."""
 
 import numpy as np

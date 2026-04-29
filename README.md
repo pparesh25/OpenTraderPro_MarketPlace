@@ -234,13 +234,37 @@ To author a new plugin / strategy / indicator, start from the auto-seeded templa
 | Strategy | `~/.opentrader-pro/strategies/_template.txt` |
 | Indicator | `~/.opentrader-pro/indicators/custom/_template.txt` |
 
-Plugins additionally have a CLI validator:
+All three extension types ship a CLI validator. Run before dropping a new file into your `~/.opentrader-pro/` directory so syntax errors, missing abstract methods, and metadata typos surface in a one-shot terminal command instead of silently as a half-loaded extension at app boot:
 
 ```bash
+# Plugins (V3 §P3)
 python -m opentrader.connectors_v2.validate /path/to/your_plugin.txt
+
+# Strategies (Phase S2)
+python -m opentrader.strategy.validate /path/to/your_strategy.txt
+
+# Indicators (Phase S2)
+python -m opentrader.indicators.validate /path/to/your_indicator.txt
 ```
 
-A validator for strategies and indicators is on the roadmap. See the OpenTrader-Pro docs (`docs/architecture/plugin_authoring_guide.md`) for the plugin contract surface.
+Each validator runs the same pipeline — file access → marker check → compile → exec → class lookup → metadata → instantiate → soft feature lints — adapted to that extension's contract surface. The indicator validator additionally probes `calculate()` against a synthetic 100-bar OHLCV frame, catching the most common authoring bug (a TA-Lib slice that returns a wrong-length output) before you see a half-blank chart panel.
+
+Exit code is `0` on no errors (warnings are non-fatal); `1` on any error.
+
+### Optional `# plugin-type:` marker (Phase S1)
+
+Every shipped marketplace file declares its extension type as the first non-blank line:
+
+```python
+# plugin-type: strategy        # for strategies/*.txt
+# plugin-type: indicator       # for indicators/*/*.txt
+# plugin-type: plugin-data     # for plugins/data/*.txt (existing)
+# plugin-type: plugin-exec     # for plugins/exec/*.txt (existing)
+```
+
+The marker is **optional and backward-compatible** for strategies + indicators: pre-S1 files without it still load, and the validator only emits a warning. A *wrong* marker (e.g. a strategy file declaring `plugin-data`) IS an error since it indicates a misplaced file. Plugins continue to require the marker as before — the loader rejects unmarked files in `plugins/{data,exec}/`.
+
+See the OpenTrader-Pro docs (`docs/architecture/plugin_authoring_guide.md`) for the plugin contract surface; strategy + indicator authoring guides are on the Phase S4 roadmap.
 
 ---
 
@@ -273,11 +297,11 @@ These files are example/reference plugins distributed under GPL-3.0. You are fre
 - ✅ **Phase M3 — In-app marketplace installer** (2026-04-28): "Install marketplace files" button in the Accounts panel. Headless CLI via `python -m opentrader.connectors_v2.marketplace_install`.
 - ✅ **Phase S3 — Consent gate for strategies + indicators** (2026-04-28): one-time consent dialog covers all three categories; user-edit dirs only load when consent is recorded.
 - ✅ **Phase M4 — Marketplace public flip** (2026-04-29): this repository is now public.
+- ✅ **Phase S1 — Optional marker lines for strategies + indicators** (2026-04-30): every marketplace `.txt` now declares `# plugin-type: strategy` or `# plugin-type: indicator` as its first non-blank line. Backward-compatible — strategy + indicator loaders still accept unmarked user files, the validator only warns. See "Optional `# plugin-type:` marker" above.
+- ✅ **Phase S2 — Validator CLIs for strategies + indicators** (2026-04-30): `python -m opentrader.strategy.validate` + `python -m opentrader.indicators.validate` mirror the plugin validator's pipeline. The indicator validator additionally probes `calculate()` against a synthetic 100-bar OHLCV frame so length/shape mismatches surface before plot time.
 
 ### Planned (no committed dates)
 
-- **Phase S1 — Optional marker lines for strategies + indicators** (~2-3h, nice-to-have, backward-compatible): make the `.txt` self-identifying without requiring a contract change.
-- **Phase S2 — Validator CLIs for strategies + indicators** (~8-12h): mirror the plugin validator's 8-step pipeline. Plugins already have `python -m opentrader.connectors_v2.validate`.
 - **Phase S4 — Authoring guides for strategies + indicators** (~4-6h): dedicated `strategy_authoring_guide.md` + `indicator_authoring_guide.md` siblings to the existing plugin guide.
 - **Auto-update from M3** (deferred to v1.1): the M3 installer is manual today; a future release will check for newer marketplace versions on a cadence and prompt to update.
 - **Key rotation infrastructure** (V4): currently a single embedded public key with no expiry or revocation. Multi-key + rotation overlap planned for V4.

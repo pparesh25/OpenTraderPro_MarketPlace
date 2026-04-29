@@ -1,3 +1,4 @@
+# plugin-type: indicator
 """Bollinger Bands indicator."""
 
 import numpy as np

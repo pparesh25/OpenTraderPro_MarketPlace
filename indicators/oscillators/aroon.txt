@@ -1,3 +1,4 @@
+# plugin-type: indicator
 """Aroon indicator."""
 
 import numpy as np

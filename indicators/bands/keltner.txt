@@ -1,3 +1,4 @@
+# plugin-type: indicator
 """Keltner Channels indicator."""
 
 import pandas as pd

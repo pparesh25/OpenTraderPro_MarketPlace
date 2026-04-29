@@ -1,3 +1,4 @@
+# plugin-type: strategy
 # mis_exit_all.txt — Force-close every open MIS position before broker squareoff
 #
 # Why this strategy exists:

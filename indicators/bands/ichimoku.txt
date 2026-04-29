@@ -1,3 +1,4 @@
+# plugin-type: indicator
 """Ichimoku Cloud indicator."""
 
 import numpy as np

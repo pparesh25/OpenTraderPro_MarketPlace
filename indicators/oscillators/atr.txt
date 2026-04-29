@@ -1,3 +1,4 @@
+# plugin-type: indicator
 """Average True Range indicator."""
 
 import numpy as np
