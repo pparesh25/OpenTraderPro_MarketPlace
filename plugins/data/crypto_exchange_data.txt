@@ -51,20 +51,34 @@ logger = logging.getLogger(__name__)
 
 
 # ── Optional dependency ────────────────────────────────────────────────
+# F-S2-bin-imports — python-binance ≥1.0 reorganised its module layout:
+# ``BinanceSocketManager`` moved from ``binance.streams`` to
+# ``binance.ws.streams``. The plugin tries the modern path first and
+# falls back to the legacy location for pre-1.0 installs so users on
+# either side keep working. The "import failed" branch logs the exact
+# exception so a future module relocation surfaces with a precise
+# diagnostic instead of the misleading "not installed" message.
 try:
     from binance.client import Client
     from binance.exceptions import BinanceAPIException
-    from binance.streams import BinanceSocketManager
+    try:
+        from binance.ws.streams import BinanceSocketManager   # python-binance ≥1.0
+    except ImportError:
+        from binance.streams import BinanceSocketManager      # python-binance <1.0
 
     BINANCE_AVAILABLE = True
-except ImportError:
+except ImportError as _bin_import_err:
     BINANCE_AVAILABLE = False
     Client = None                      # type: ignore[assignment,misc]
     BinanceSocketManager = None        # type: ignore[assignment,misc]
     BinanceAPIException = Exception    # type: ignore[misc,assignment]
     logger.info(
-        "python-binance not installed — binance plugin reports unavailable. "
-        "Install with: pip install python-binance"
+        "python-binance import failed (%s: %s) — binance plugin reports "
+        "unavailable. Install with: pip install python-binance — and "
+        "verify the install lands in the same Python environment "
+        "OpenTrader is running from (a common pitfall is two different "
+        "Python interpreters on PATH).",
+        type(_bin_import_err).__name__, _bin_import_err,
     )
 
 
