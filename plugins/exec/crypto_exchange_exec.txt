@@ -1863,21 +1863,47 @@ class ExecPlugin(ExecPluginV2):
 
         # Prefer USDM futures wallet (the primary place-order balance for
         # leveraged segments). Fall back to spot USDT.
-        try:
-            with self._session.api_lock:
-                acct = client.futures_account() or {}
-            avail = _safe_float(acct.get("availableBalance", 0.0))
-            used = _safe_float(acct.get("totalInitialMargin", 0.0))
-            total = _safe_float(acct.get("totalWalletBalance", avail))
-            if total or avail:
-                return Margins(
-                    available=avail, used=used, total=total, currency="USDT",
-                )
-        except Exception as exc:
-            logger.info(
-                "Binance[%s] futures_account unavailable, falling back to spot: %s",
-                self.alias, exc,
-            )
+        # F-S2-bin-perm — same dedup as get_positions / get_order_book.
+        # When ``futures_account`` returns ``-2015`` (key lacks Futures
+        # permission), short-circuit to the spot-balance fallback for
+        # the rest of the session instead of one HTTP round-trip + log
+        # line per get_margins() call (which MtmUpdater fires at 60s
+        # cadence — a steady "futures_account unavailable" line every
+        # minute when the user is on a Read-only key for paper trading).
+        denied = getattr(self._session, "_segment_perm_denied", None)
+        if denied is None or USDM not in denied:
+            try:
+                with self._session.api_lock:
+                    acct = client.futures_account() or {}
+                avail = _safe_float(acct.get("availableBalance", 0.0))
+                used = _safe_float(acct.get("totalInitialMargin", 0.0))
+                total = _safe_float(acct.get("totalWalletBalance", avail))
+                if total or avail:
+                    return Margins(
+                        available=avail, used=used, total=total,
+                        currency="USDT",
+                    )
+            except Exception as exc:
+                msg = str(exc)
+                if "-2015" in msg or "permissions for action" in msg:
+                    if denied is None:
+                        denied = set()
+                        self._session._segment_perm_denied = denied  # type: ignore[attr-defined]
+                    if USDM not in denied:
+                        denied.add(USDM)
+                        logger.warning(
+                            "Binance[%s] futures_account skipped permanently — "
+                            "API key lacks Futures permission (code -2015). "
+                            "Falling back to spot USDT balance for "
+                            "get_margins() going forward.",
+                            self.alias,
+                        )
+                else:
+                    logger.info(
+                        "Binance[%s] futures_account unavailable, "
+                        "falling back to spot: %s",
+                        self.alias, exc,
+                    )
 
         try:
             with self._session.api_lock:
