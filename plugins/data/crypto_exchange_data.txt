@@ -512,6 +512,15 @@ class DataPlugin(DataPluginV2):
         # Realtime state (spot-only).
         self._bm: Any | None = None
         self._conn_keys: dict[str, Any] = {}        # "BTCUSDT" → socket key
+        # F-S2-bin-tickexch — remember the exchange string each symbol
+        # was subscribed under, so the emitted ``Tick.exchange`` matches
+        # the ``SubscriptionKey`` the RealtimeManager keyed its builder
+        # on. Pre-fix the plugin emitted ``exchange=SPOT`` (segment
+        # string "CRYPTO_SPOT") but the watchlist + subscribe flow used
+        # exchange="BINANCE" — every tick became an orphan
+        # (``no builder; active subs ...`` log line) and live bars
+        # never built on the chart.
+        self._symbol_exchange: dict[str, str] = {}
         self._on_tick: Callable[[Tick], None] | None = None
         self._last_cum_volume: dict[str, float] = {}   # delta-volume tracker
 
@@ -754,9 +763,15 @@ class DataPlugin(DataPluginV2):
                 self._bm = None
                 return
 
-        for sym, _exch in symbols:
+        for sym, exch in symbols:
             u = sym.upper()
             if u in self._conn_keys:
+                # Even on dedup, refresh the exchange map in case the
+                # caller resubscribes the same symbol under a different
+                # exchange alias (rare but possible across watchlist
+                # reloads).
+                if exch:
+                    self._symbol_exchange[u] = exch
                 continue
             try:
                 # F-S2-bin-twm — callback first, symbol second (TWM
@@ -769,6 +784,11 @@ class DataPlugin(DataPluginV2):
                     symbol=u.lower(),
                 )
                 self._conn_keys[u] = key
+                # F-S2-bin-tickexch — remember the exchange string the
+                # caller used so ``_on_ticker_message`` can stamp it on
+                # the emitted Tick. Falls back to "BINANCE" if caller
+                # passed empty (legacy callers / orphan-recovery paths).
+                self._symbol_exchange[u] = exch or "BINANCE"
             except Exception as exc:                     # pragma: no cover
                 logger.warning(
                     "Binance[%s] ws subscribe %s failed: %s",
@@ -786,6 +806,10 @@ class DataPlugin(DataPluginV2):
         for sym, _exch in symbols:
             u = sym.upper()
             key = self._conn_keys.pop(u, None)
+            # F-S2-bin-tickexch — drop the exchange-mapping entry too,
+            # so a later resubscribe (potentially under a different
+            # exchange alias) doesn't inherit the stale value.
+            self._symbol_exchange.pop(u, None)
             if key is not None:
                 try:
                     self._bm.stop_socket(key)
@@ -815,6 +839,7 @@ class DataPlugin(DataPluginV2):
                 )
         self._bm = None
         self._conn_keys.clear()
+        self._symbol_exchange.clear()
         self._on_tick = None
         self._last_cum_volume.clear()
 
@@ -839,10 +864,20 @@ class DataPlugin(DataPluginV2):
         ts_ms = msg.get("E") or msg.get("T") or int(time.time() * 1000)
         ts = datetime.fromtimestamp(int(ts_ms) / 1000, tz=timezone.utc)
 
+        # F-S2-bin-tickexch — emit the same exchange string the caller
+        # subscribed with so ``RealtimeManager._builders`` finds the
+        # match (key = (account_id, symbol, exchange)). Pre-fix this
+        # was hard-coded to ``SPOT`` ("CRYPTO_SPOT"), so a watchlist
+        # configured with ``exchange="BINANCE"`` got every tick logged
+        # as ``orphan tick`` and dropped before reaching the bar
+        # builder + chart. Fallback to "BINANCE" if the symbol map
+        # lacks the entry (defensive — should always be present after
+        # a successful subscribe_realtime call).
+        exchange = self._symbol_exchange.get(symbol, "BINANCE")
         try:
             cb(Tick(
                 symbol=symbol,
-                exchange=SPOT,
+                exchange=exchange,
                 price=float(msg.get("c", 0.0)),
                 volume=delta,
                 timestamp=ts,
