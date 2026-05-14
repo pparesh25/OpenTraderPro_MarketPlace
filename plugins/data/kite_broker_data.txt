@@ -93,7 +93,7 @@ TIMEFRAME_MAP = {
     "1hour": "60minute", "1D": "day", "1W": "week", "1M": "month",
 }
 PRODUCT_MAP = {"CNC": "CNC", "MIS": "MIS", "NRML": "NRML"}
-ORDER_TYPE_MAP = {"MARKET": "MARKET", "LIMIT": "LIMIT", "SL": "SL", "SL-M": "SL-M"}
+ORDER_TYPE_MAP = {"MARKET": "MARKET", "LIMIT": "LIMIT", "STOP_LIMIT": "STOP_LIMIT", "STOP": "STOP"}
 
 
 # ── Local redirect server for OAuth ────────────────────────────────────
@@ -513,6 +513,61 @@ class KiteSession:
 
 
 # ══════════════════════════════════════════════════════════════════════
+# MCX non-agri DST flip — module-level helpers
+# ══════════════════════════════════════════════════════════════════════
+#
+# MCX bullion / metals / energy commodities reference US futures
+# markets for pricing, so their close time shifts when the US enters /
+# exits Daylight Saving Time:
+#
+#   * Summer (US DST active, mid-Mar–early-Nov): 09:00–23:55 IST
+#   * Winter (US standard time, early-Nov–mid-Mar): 09:00–23:30 IST
+#
+# Pre-Phase-6 the plugin hard-coded 09:00–23:55 year-round, which:
+#   * dropped ~25 min of valid trading every winter day
+#     (orders during 23:30–23:55 silently rejected by broker as
+#     post-close), and
+#   * forced winter users to write a ``market_hours.json`` override.
+#
+# These helpers compute the flip from the system tzdata
+# (America/New_York) so the rule stays correct across future DST
+# legislation changes without source edits.
+
+def _today_in_ist(_clock=datetime.now) -> date:
+    """Return today's date in IST. The ``_clock`` injection point
+    lets tests pass a fixed ``datetime`` provider for deterministic
+    DST-boundary assertions; production calls fall through to
+    ``datetime.now``."""
+    return _clock(tz=ZoneInfo("Asia/Kolkata")).date()
+
+
+def _is_us_dst_active(on: date) -> bool:
+    """True when New York is observing DST on date ``on``.
+
+    Uses the system tzdata (``zoneinfo.ZoneInfo``) as the source of
+    truth — survives future US DST legislation changes (Sunshine
+    Protection Act etc.) without code edits. Pure: same input →
+    same output, no clock reads.
+    """
+    ny = ZoneInfo("America/New_York")
+    noon_ny = datetime.combine(on, dtime(12, 0), tzinfo=ny)
+    return noon_ny.dst() != timedelta(0)
+
+
+def _mcx_nonagri_close_time(today: date | None = None) -> dtime:
+    """Resolve today's MCX non-agri close time:
+
+    * 23:55 IST when US is in DST (summer, ~mid-Mar–early-Nov)
+    * 23:30 IST otherwise (winter, early-Nov–mid-Mar)
+
+    ``today`` defaults to ``_today_in_ist()``; tests pin it.
+    """
+    if today is None:
+        today = _today_in_ist()
+    return dtime(23, 55) if _is_us_dst_active(today) else dtime(23, 30)
+
+
+# ══════════════════════════════════════════════════════════════════════
 # DataPlugin
 # ══════════════════════════════════════════════════════════════════════
 class DataPlugin(DataPluginV2):
@@ -653,16 +708,56 @@ class DataPlugin(DataPluginV2):
     def get_market_hours(
         self, segment: str | None = None
     ) -> tuple[MarketWindow, ...]:
-        """Mirror ``ExecPlugin.get_market_hours`` for the data side."""
+        """Mirror ``ExecPlugin.get_market_hours`` for the data side.
+
+        Per-segment Indian market sessions (all IST):
+
+        * Equity (NSE/BSE cash + F&O): 09:15–15:30
+        * Currency derivatives (CDS/BCD): **09:00–17:00**
+          — pre-fix this was bundled with equity 09:15–15:30, which
+          dropped live ticks in the 09:00–09:15 pre-open window AND
+          15:30–17:00 post-equity-close window (~1h45m daily of valid
+          currency trading silently lost).
+        * MCX commodities — three sub-sessions:
+          - ``MCX_AGRI`` (Cotton, CPO, Kapas): 09:00–21:00
+          - ``MCX_AGRI_EARLY`` (Cardamom, Mentha, Castor): 09:00–17:00
+          - ``MCX_NONAGRI`` / plain ``MCX`` (Bullion, Metals, Energy):
+            **date-aware** — 09:00–23:55 when US is in DST
+            (~mid-Mar–early-Nov), 09:00–23:30 otherwise. The flip is
+            driven by US commodity-market reference pricing; the
+            plugin reads system tzdata so the rule stays correct
+            across future US DST legislation changes.
+
+        Pre-fix every MCX_* segment returned 09:00–23:55 year-round, so
+        agri orders were accepted past their actual close (broker
+        would reject — worse UX than fail-fast) AND winter non-agri
+        orders silently slipped through the 23:30–23:55 gap that the
+        broker had closed.
+        """
         ist = ZoneInfo("Asia/Kolkata")
-        equity = MarketWindow(dtime(9, 15), dtime(15, 30), tz=ist)
-        commodity = MarketWindow(dtime(9, 0), dtime(23, 55), tz=ist)
+        equity              = MarketWindow(dtime( 9, 15), dtime(15, 30), tz=ist)
+        currency            = MarketWindow(dtime( 9,  0), dtime(17,  0), tz=ist)
+        # Non-agri close flips with US DST — see ``_mcx_nonagri_close_time``
+        # at module level for the rationale.
+        commodity_nonagri   = MarketWindow(
+            dtime( 9,  0), _mcx_nonagri_close_time(), tz=ist,
+        )
+        commodity_agri      = MarketWindow(dtime( 9,  0), dtime(21,  0), tz=ist)
+        commodity_agri_early= MarketWindow(dtime( 9,  0), dtime(17,  0), tz=ist)
         seg = (segment or "").upper()
+        if seg in {"CDS", "BCD", "NSE_CDS", "BSE_CDS"}:
+            return (currency,)
+        if seg == "MCX_AGRI":
+            return (commodity_agri,)
+        if seg == "MCX_AGRI_EARLY":
+            return (commodity_agri_early,)
         if seg.startswith("MCX"):
-            return (commodity,)
-        if seg in {"NSE", "NSE_EQ", "BSE", "BSE_EQ", "NFO", "BFO", "CDS", "BCD"}:
+            return (commodity_nonagri,)
+        if seg in {"NSE", "NSE_EQ", "BSE", "BSE_EQ", "NFO", "BFO"}:
             return (equity,)
-        return (equity, commodity)
+        # No segment hint — return the broadest union an Indian-equity
+        # plugin reasonably covers (equity + non-agri commodities).
+        return (equity, commodity_nonagri)
 
     # ── Historical ───────────────────────────────────────────────────
     def fetch_historical(
@@ -916,16 +1011,11 @@ class DataPlugin(DataPluginV2):
             buy = (depth.get("buy") or [{}])[0]
             sell = (depth.get("sell") or [{}])[0]
 
-            # F-S1-6 — Kite's ``ohlc.close`` is the previous session's
-            # close (yesterday's), not today's in-progress close. Map it
-            # to ``Tick.prev_close``; the local var name keeps ``close``
-            # mirroring Kite's API field for traceability when reading
-            # raw KiteTicker payloads alongside this code.
             day = raw.get("ohlc") or {}
-            d_open       = _as_float(day.get("open"))
-            d_high       = _as_float(day.get("high"))
-            d_low        = _as_float(day.get("low"))
-            d_prev_close = _as_float(day.get("close"))
+            d_open  = _as_float(day.get("open"))
+            d_high  = _as_float(day.get("high"))
+            d_low   = _as_float(day.get("low"))
+            d_close = _as_float(day.get("close"))
 
             try:
                 cb(Tick(
@@ -939,11 +1029,7 @@ class DataPlugin(DataPluginV2):
                     day_open=d_open,
                     day_high=d_high,
                     day_low=d_low,
-                    # F-S1-6 — was ``day_close=...``; the app-side rename
-                    # made construction with the old name a hard break
-                    # (TypeError every tick) so a populator can't silently
-                    # ship the wrong-meaning value.
-                    prev_close=d_prev_close,
+                    prev_close=d_close,
                 ))
             except Exception:                               # pragma: no cover
                 logger.exception("zerodha on_tick raised")
